@@ -8,7 +8,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 use ratatui::Frame;
 
-use crate::tui::app::TuiApp;
+use crate::tui::app::{StatusKind, TuiApp};
 use crate::tui::theme::{to_ratatui_color, TuiStyles};
 
 /// Render the complete TUI dashboard frame.
@@ -317,11 +317,13 @@ fn draw_right_pane(f: &mut Frame, app: &TuiApp, area: Rect) {
 fn draw_footer(f: &mut Frame, app: &TuiApp, area: Rect) {
     let styles = &app.styles;
 
-    let content = if let Some(msg) = app.active_status() {
-        Line::from(vec![
-            Span::styled("✓ ", styles.success()),
-            Span::styled(msg, styles.bold_accent()),
-        ])
+    let content = if let Some((msg, kind)) = app.active_status() {
+        let (prefix, style) = match kind {
+            StatusKind::Success => ("✓ ", styles.success()),
+            StatusKind::Error => ("! ", styles.warning()),
+            StatusKind::Info => ("i ", styles.muted()),
+        };
+        Line::from(vec![Span::styled(prefix, style), Span::styled(msg, style)])
     } else {
         Line::from(vec![
             Span::styled("[?] ", styles.bold_accent()),
@@ -1022,6 +1024,35 @@ mod tests {
         // Verify version badge appears in list
         assert!(content.contains("DATABASE_URL"));
         assert!(content.contains("v1"));
+    }
+
+    #[test]
+    fn status_footer_distinguishes_outcomes_and_expires() {
+        let (store, keychain, config) = unlocked();
+        let theme = Theme::default();
+        let app = App::new(&store, &keychain);
+        let mut tui_app = TuiApp::new(&app, &store, config, &theme).unwrap();
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        tui_app.set_status_success("copied".into());
+        terminal.draw(|f| draw(f, &tui_app)).unwrap();
+        assert!(format!("{:?}", terminal.backend().buffer()).contains("✓ copied"));
+
+        tui_app.set_status_error("copied".into());
+        terminal.draw(|f| draw(f, &tui_app)).unwrap();
+        assert!(format!("{:?}", terminal.backend().buffer()).contains("! copied"));
+
+        tui_app.set_status_info("copied".into());
+        terminal.draw(|f| draw(f, &tui_app)).unwrap();
+        assert!(format!("{:?}", terminal.backend().buffer()).contains("i copied"));
+
+        tui_app.set_status_error("expired".into());
+        tui_app.status_message.as_mut().unwrap().created_at -= Duration::from_secs(6);
+        terminal.draw(|f| draw(f, &tui_app)).unwrap();
+        let content = format!("{:?}", terminal.backend().buffer());
+        assert!(!content.contains("expired"), "{content}");
+        assert!(content.contains("Help"), "{content}");
     }
 
     #[test]
